@@ -34,6 +34,9 @@ No third-party Python packages are required.
      - cached
      - uncached-like (via `Cache-Control: no-cache` and `Pragma: no-cache` headers)
 5. Prints a speed breakdown (avg, median, p95, min, max) by category and the slowest requests.
+6. Prints per-page delta tables for frontend:
+   - logged-out delta: `frontend_uncached - frontend_cached`
+   - logged-in delta: `frontend_logged_in_uncached_headers - frontend_logged_in_cached`
 
 If credentials are not provided, wp-admin checks are skipped automatically.
 
@@ -80,3 +83,4 @@ Console output includes:
 - top slowest requests
 
 Optional JSON report (`--output`) includes full request-level details for automation.
+It also includes `per_page_deltas` for direct cached vs uncached comparison per URL.

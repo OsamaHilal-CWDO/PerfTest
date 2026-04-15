@@ -384,6 +384,92 @@ def print_slowest(rows: Sequence[RequestResult], limit: int = 10) -> None:
     print("-" * 132)
 
 
+def remove_query_params(url: str, params_to_drop: Set[str]) -> str:
+    parsed = urllib.parse.urlparse(url)
+    query_items = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    filtered = [(k, v) for (k, v) in query_items if k not in params_to_drop]
+    new_query = urllib.parse.urlencode(filtered, doseq=True)
+    return urllib.parse.urlunparse(
+        (parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment)
+    )
+
+
+def build_per_page_delta(
+    rows: Sequence[RequestResult],
+    cached_category: str,
+    uncached_category: str,
+    uncached_drop_params: Optional[Set[str]] = None,
+) -> List[Dict[str, object]]:
+    """
+    Build per-page delta table:
+      delta_ms = avg_uncached_ms - avg_cached_ms
+      delta_pct = delta_ms / avg_cached_ms * 100
+    """
+    cached_by_page: Dict[str, List[RequestResult]] = defaultdict(list)
+    uncached_by_page: Dict[str, List[RequestResult]] = defaultdict(list)
+
+    for row in rows:
+        if row.category == cached_category:
+            cached_by_page[row.url].append(row)
+        elif row.category == uncached_category:
+            normalized_url = (
+                remove_query_params(row.url, uncached_drop_params)
+                if uncached_drop_params
+                else row.url
+            )
+            uncached_by_page[normalized_url].append(row)
+
+    pages = sorted(set(cached_by_page.keys()) & set(uncached_by_page.keys()))
+    delta_rows: List[Dict[str, object]] = []
+    for page in pages:
+        cached_group_ok = [r.duration_ms for r in cached_by_page[page] if r.ok]
+        uncached_group_ok = [r.duration_ms for r in uncached_by_page[page] if r.ok]
+        if not cached_group_ok or not uncached_group_ok:
+            continue
+        avg_cached = statistics.mean(cached_group_ok)
+        avg_uncached = statistics.mean(uncached_group_ok)
+        delta_ms = avg_uncached - avg_cached
+        delta_pct = (delta_ms / avg_cached * 100.0) if avg_cached else 0.0
+        delta_rows.append(
+            {
+                "url": page,
+                "cached_category": cached_category,
+                "uncached_category": uncached_category,
+                "cached_ok_count": len(cached_group_ok),
+                "uncached_ok_count": len(uncached_group_ok),
+                "avg_cached_ms": round(avg_cached, 2),
+                "avg_uncached_ms": round(avg_uncached, 2),
+                "delta_ms": round(delta_ms, 2),
+                "delta_pct": round(delta_pct, 2),
+            }
+        )
+    delta_rows.sort(key=lambda item: float(item["delta_ms"]), reverse=True)
+    return delta_rows
+
+
+def print_per_page_delta_table(title: str, delta_rows: Sequence[Dict[str, object]], limit: int = 10) -> None:
+    if not delta_rows:
+        return
+    shown = list(delta_rows)[:limit]
+    print(f"\nPer-page delta ({title}) [uncached - cached], top {len(shown)} by delta")
+    print("-" * 154)
+    print(
+        f"{'Delta(ms)':>10} {'Delta(%)':>10} {'CachedAvg':>11} {'UncachedAvg':>13} {'CachedN':>8} {'UncachedN':>10} URL"
+    )
+    print("-" * 154)
+    for row in shown:
+        print(
+            f"{float(row['delta_ms']):>10.2f} "
+            f"{float(row['delta_pct']):>10.2f} "
+            f"{float(row['avg_cached_ms']):>11.2f} "
+            f"{float(row['avg_uncached_ms']):>13.2f} "
+            f"{int(row['cached_ok_count']):>8} "
+            f"{int(row['uncached_ok_count']):>10} "
+            f"{str(row['url'])}"
+        )
+    print("-" * 154)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run WordPress performance checks for cached/uncached pages and optional wp-admin routes."
@@ -521,8 +607,22 @@ def main() -> int:
             print("Reason: login failed with provided credentials.")
 
     summary = build_summary(results)
+    frontend_delta = build_per_page_delta(
+        results,
+        cached_category="frontend_cached",
+        uncached_category="frontend_uncached",
+        uncached_drop_params={"no-cache"},
+    )
+    logged_in_frontend_delta = build_per_page_delta(
+        results,
+        cached_category="frontend_logged_in_cached",
+        uncached_category="frontend_logged_in_uncached_headers",
+        uncached_drop_params=None,
+    )
     print_summary_table(summary)
     print_slowest(results, limit=10)
+    print_per_page_delta_table("frontend logged-out", frontend_delta, limit=10)
+    print_per_page_delta_table("frontend logged-in", logged_in_frontend_delta, limit=10)
 
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -538,6 +638,10 @@ def main() -> int:
         },
         "sampled_pages": sampled_pages,
         "summary": summary,
+        "per_page_deltas": {
+            "frontend_logged_out": frontend_delta,
+            "frontend_logged_in": logged_in_frontend_delta,
+        },
         "results": [asdict(row) for row in results],
     }
 
