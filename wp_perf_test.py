@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import socket
 import statistics
 import sys
 import time
@@ -87,11 +88,15 @@ def fetch_text(
     headers: Optional[Dict[str, str]] = None,
 ) -> Tuple[int, str]:
     req = urllib.request.Request(url, headers=headers or {}, method="GET")
-    with opener.open(req, timeout=timeout) as resp:
-        data = resp.read()
-        encoding = resp.headers.get_content_charset() or "utf-8"
-        text = data.decode(encoding, errors="replace")
-        return resp.getcode(), text
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            data = resp.read()
+            encoding = resp.headers.get_content_charset() or "utf-8"
+            text = data.decode(encoding, errors="replace")
+            return resp.getcode(), text
+    except socket.timeout as exc:
+        # Normalize low-level socket timeouts so callers can handle retries/skips.
+        raise TimeoutError(str(exc)) from exc
 
 
 def parse_sitemap_xml(xml_text: str) -> Tuple[List[str], List[str]]:

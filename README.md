@@ -22,6 +22,7 @@ No third-party Python packages are required.
    - `/sitemap.xml`
    - `/wp-sitemap.xml`
    - `/sitemap_index.xml`
+   - network timeouts on individual sitemap files are skipped (non-fatal), so one slow sitemap does not abort the whole run
 2. Randomly samples 10 frontend pages (configurable), always including homepage.
 3. Runs multiple iterations (configurable) of:
    - `frontend_uncached`: appends `?no-cache=<random>`
