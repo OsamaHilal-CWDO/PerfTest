@@ -50,6 +50,10 @@ class RequestResult:
     error: Optional[str] = None
 
 
+def ms_to_sec(ms: float, precision: int = 3) -> float:
+    return round(ms / 1000.0, precision)
+
+
 def normalize_base_url(base_url: str) -> str:
     parsed = urllib.parse.urlparse(base_url.strip())
     if not parsed.scheme:
@@ -340,11 +344,11 @@ def build_summary(rows: Sequence[RequestResult]) -> List[Dict[str, object]]:
                 "count": len(group),
                 "success_count": ok_count,
                 "success_rate": round((ok_count / len(group)) * 100, 2) if group else 0.0,
-                "avg_ms": round(statistics.mean(durations), 2) if durations else 0.0,
-                "median_ms": round(statistics.median(durations), 2) if durations else 0.0,
-                "p95_ms": round(percentile(durations, 0.95), 2) if durations else 0.0,
-                "min_ms": round(min(durations), 2) if durations else 0.0,
-                "max_ms": round(max(durations), 2) if durations else 0.0,
+                "avg_sec": ms_to_sec(statistics.mean(durations)) if durations else 0.0,
+                "median_sec": ms_to_sec(statistics.median(durations)) if durations else 0.0,
+                "p95_sec": ms_to_sec(percentile(durations, 0.95)) if durations else 0.0,
+                "min_sec": ms_to_sec(min(durations)) if durations else 0.0,
+                "max_sec": ms_to_sec(max(durations)) if durations else 0.0,
             }
         )
     return output
@@ -357,7 +361,7 @@ def print_summary_table(summary: Sequence[Dict[str, object]]) -> None:
     print("\nPerformance summary by category")
     print("-" * 112)
     print(
-        f"{'Category':36} {'Count':>5} {'Success%':>8} {'Avg(ms)':>10} {'Median':>10} {'P95':>10} {'Min':>10} {'Max':>10}"
+        f"{'Category':36} {'Count':>5} {'Success%':>8} {'Avg(s)':>10} {'Median':>10} {'P95':>10} {'Min':>10} {'Max':>10}"
     )
     print("-" * 112)
     for row in summary:
@@ -365,11 +369,11 @@ def print_summary_table(summary: Sequence[Dict[str, object]]) -> None:
             f"{str(row['category']):36} "
             f"{int(row['count']):>5} "
             f"{float(row['success_rate']):>8.2f} "
-            f"{float(row['avg_ms']):>10.2f} "
-            f"{float(row['median_ms']):>10.2f} "
-            f"{float(row['p95_ms']):>10.2f} "
-            f"{float(row['min_ms']):>10.2f} "
-            f"{float(row['max_ms']):>10.2f}"
+            f"{float(row['avg_sec']):>10.3f} "
+            f"{float(row['median_sec']):>10.3f} "
+            f"{float(row['p95_sec']):>10.3f} "
+            f"{float(row['min_sec']):>10.3f} "
+            f"{float(row['max_sec']):>10.3f}"
         )
     print("-" * 112)
 
@@ -380,11 +384,11 @@ def print_slowest(rows: Sequence[RequestResult], limit: int = 10) -> None:
     slowest = sorted(rows, key=lambda r: r.duration_ms, reverse=True)[:limit]
     print(f"\nTop {len(slowest)} slowest requests")
     print("-" * 132)
-    print(f"{'Category':34} {'Run':>4} {'Status':>6} {'Time(ms)':>10} {'URL'}")
+    print(f"{'Category':34} {'Run':>4} {'Status':>6} {'Time(s)':>10} {'URL'}")
     print("-" * 132)
     for row in slowest:
         print(
-            f"{row.category:34} {row.run:>4} {row.status_code:>6} {row.duration_ms:>10.2f} {row.url}"
+            f"{row.category:34} {row.run:>4} {row.status_code:>6} {ms_to_sec(row.duration_ms):>10.3f} {row.url}"
         )
     print("-" * 132)
 
@@ -407,8 +411,8 @@ def build_per_page_delta(
 ) -> List[Dict[str, object]]:
     """
     Build per-page delta table:
-      delta_ms = avg_uncached_ms - avg_cached_ms
-      delta_pct = delta_ms / avg_cached_ms * 100
+      delta_sec = avg_uncached_sec - avg_cached_sec
+      delta_pct = delta_sec / avg_cached_sec * 100
     """
     cached_by_page: Dict[str, List[RequestResult]] = defaultdict(list)
     uncached_by_page: Dict[str, List[RequestResult]] = defaultdict(list)
@@ -442,13 +446,13 @@ def build_per_page_delta(
                 "uncached_category": uncached_category,
                 "cached_ok_count": len(cached_group_ok),
                 "uncached_ok_count": len(uncached_group_ok),
-                "avg_cached_ms": round(avg_cached, 2),
-                "avg_uncached_ms": round(avg_uncached, 2),
-                "delta_ms": round(delta_ms, 2),
+                "avg_cached_sec": ms_to_sec(avg_cached),
+                "avg_uncached_sec": ms_to_sec(avg_uncached),
+                "delta_sec": ms_to_sec(delta_ms),
                 "delta_pct": round(delta_pct, 2),
             }
         )
-    delta_rows.sort(key=lambda item: float(item["delta_ms"]), reverse=True)
+    delta_rows.sort(key=lambda item: float(item["delta_sec"]), reverse=True)
     return delta_rows
 
 
@@ -459,15 +463,15 @@ def print_per_page_delta_table(title: str, delta_rows: Sequence[Dict[str, object
     print(f"\nPer-page delta ({title}) [uncached - cached], top {len(shown)} by delta")
     print("-" * 154)
     print(
-        f"{'Delta(ms)':>10} {'Delta(%)':>10} {'CachedAvg':>11} {'UncachedAvg':>13} {'CachedN':>8} {'UncachedN':>10} URL"
+        f"{'Delta(s)':>10} {'Delta(%)':>10} {'CachedAvg(s)':>12} {'UncachedAvg(s)':>14} {'CachedN':>8} {'UncachedN':>10} URL"
     )
     print("-" * 154)
     for row in shown:
         print(
-            f"{float(row['delta_ms']):>10.2f} "
+            f"{float(row['delta_sec']):>10.3f} "
             f"{float(row['delta_pct']):>10.2f} "
-            f"{float(row['avg_cached_ms']):>11.2f} "
-            f"{float(row['avg_uncached_ms']):>13.2f} "
+            f"{float(row['avg_cached_sec']):>12.3f} "
+            f"{float(row['avg_uncached_sec']):>14.3f} "
             f"{int(row['cached_ok_count']):>8} "
             f"{int(row['uncached_ok_count']):>10} "
             f"{str(row['url'])}"
@@ -629,6 +633,12 @@ def main() -> int:
     print_per_page_delta_table("frontend logged-out", frontend_delta, limit=10)
     print_per_page_delta_table("frontend logged-in", logged_in_frontend_delta, limit=10)
 
+    results_payload: List[Dict[str, object]] = []
+    for row in results:
+        row_dict = asdict(row)
+        row_dict["duration_sec"] = ms_to_sec(row.duration_ms)
+        results_payload.append(row_dict)
+
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "base_url": base_url,
@@ -647,7 +657,7 @@ def main() -> int:
             "frontend_logged_out": frontend_delta,
             "frontend_logged_in": logged_in_frontend_delta,
         },
-        "results": [asdict(row) for row in results],
+        "results": results_payload,
     }
 
     if args.output:
